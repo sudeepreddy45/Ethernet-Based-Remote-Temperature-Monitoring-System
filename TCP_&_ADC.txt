@@ -1,0 +1,89 @@
+#include "mcc_generated_files/mcc.h"
+#include "mcc_generated_files/TCPIPLibrary/tcpv4.h"
+#include "mcc_generated_files/TCPIPLibrary/ipv4.h"
+#include "mcc_generated_files/TCPIPLibrary/tcpip_config.h"
+#include <stdio.h>
+#include <string.h>
+
+// Global variables
+static tcpTCB_t port7TCB;
+static uint8_t rxdataPort7[32];
+static uint8_t txdataPort7[64];
+
+void ADC_Init(void)
+{
+    TRISAbits.TRISA0 = 1;       // RA0 as input
+    ANSELAbits.ANSELA0 = 1;     // RA0 analog
+
+    ADPCH = 0x00;               // AN0 channel
+    ADREFbits.ADPREF = 0;       // Vref+ = VDD
+    ADREFbits.ADNREF = 0;       // Vref- = VSS
+
+    ADCLK = 0x3F;               // Fosc/64
+    ADCON0bits.ADCONT = 0;      // Single conversion
+    ADCON0bits.ADON = 1;        // Turn on ADC
+}
+
+uint16_t ADC_Read(void)
+{
+    ADCON0bits.GO = 1;
+    while (ADCON0bits.GO);
+    return ((ADRESH << 4) | (ADRESL >> 4));  // 12-bit result
+}
+
+void TCP_Temp_Server(void)
+{
+    uint16_t adc_val = 0;
+    float voltage = 0;
+    uint16_t temp = 0;
+
+    socketState_t socket_state = TCP_SocketPoll(&port7TCB);
+
+    switch (socket_state)
+    {
+        case NOT_A_SOCKET:
+            TCP_SocketInit(&port7TCB);
+            break;
+
+        case SOCKET_CLOSED:
+            TCP_Bind(&port7TCB, 7);
+            TCP_InsertRxBuffer(&port7TCB, rxdataPort7, sizeof(rxdataPort7));
+            TCP_Listen(&port7TCB);
+            break;
+
+        case SOCKET_CONNECTED:
+            if (TCP_SendDone(&port7TCB))
+            {
+                adc_val = ADC_Read();
+                voltage = adc_val * 0.8056;   // assuming 0.8056mV/step (Vref = 3.3V / 4096 steps)
+                temp = voltage / 10;           // simulate °C from voltage
+
+                sprintf((char*)txdataPort7, "ADC: %u, Temp: %u C\r\n", adc_val, temp);
+                TCP_Send(&port7TCB, txdataPort7, strlen((char*)txdataPort7));
+            }
+            break;
+
+        case SOCKET_CLOSING:
+            TCP_SocketRemove(&port7TCB);
+            break;
+
+        default:
+            break;
+    }
+}
+
+void main(void)
+{
+    SYSTEM_Initialize();
+    ADC_Init();
+
+    INTERRUPT_GlobalInterruptEnable();
+    INTERRUPT_PeripheralInterruptEnable();
+
+    while (1)
+    {
+        Network_Manage();
+        TCP_Temp_Server();
+        __delay_ms(1000);  // send every 1 second
+    }
+}

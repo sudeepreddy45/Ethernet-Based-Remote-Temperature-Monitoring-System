@@ -1,0 +1,47 @@
+#include <xc.h>
+#include <stdint.h>
+
+// CONFIG BITS (adjust as needed for your setup)
+#pragma config FEXTOSC = OFF
+#pragma config RSTOSC = HFINTOSC_1MHZ
+#pragma config WDTE = OFF
+
+#define _XTAL_FREQ 1000000
+
+volatile uint16_t adc_value = 0;
+volatile float adc_voltage = 0;
+volatile uint16_t temp = 0;
+void ADC_Init(void) {
+    TRISAbits.TRISA0 = 1;      // RA0 input
+    ANSELAbits.ANSELA0 = 1;    // RA0 analog
+
+    ADPCH = 0x00;              // Select AN0
+
+    ADREFbits.ADPREF = 0;      // Vref+ = VDD
+    ADREFbits.ADNREF = 0;      // Vref- = VSS
+
+    ADCLK = 0x3F;              // ADC clock Fosc/64
+
+    ADCON0bits.ADCONT = 0;     // Single conversion
+    ADCON0bits.ADON = 1;       // Enable ADC
+}
+
+
+uint16_t ADC_Read(void) {
+    ADCON0bits.GO = 1;             // Start conversion
+    while (ADCON0bits.GO);         // Wait for completion
+   // return ((ADRESH << 8) | ADRESL);
+    return ((ADRESH << 4) | (ADRESL >> 4));
+}
+
+void main(void) {
+    ADC_Init();
+
+    while (1) {
+        adc_value = ADC_Read();    // Watch this variable
+        adc_voltage = adc_value *0.8056;
+        //For LM35 1 degree celcius will give 10mV
+        temp = adc_voltage/10;
+        __delay_ms(500);
+    }
+}
